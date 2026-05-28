@@ -1,5 +1,8 @@
 name: Build Full Installer ISO/DMG image
 
+permissions:
+  contents: write
+  
 on:
   workflow_dispatch:
     inputs:
