@@ -195,3 +195,21 @@ jobs:
             echo "> [!TIP]" >> $GITHUB_STEP_SUMMARY
             echo "> Enable [Cloudflare WARP](https://one.one.one.one/) for faster download from GitHub artifact." >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Prepare Release Name
+        id: release
+        run: |
+          FORMAT_UPPER=$(echo "${{ inputs.image_format }}" | tr '[:lower:]' '[:upper:]')
+          echo "name=macOS ${{ inputs.macos_version }} ${FORMAT_UPPER}" >> $GITHUB_OUTPUT
+          echo "tag=${{ inputs.macos_version }}-${{ inputs.image_format }}-${{ github.run_id }}" >> $GITHUB_OUTPUT
+      - name: Upload to Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.name }}
+          files: ${{ steps.create_image.outputs.image_name }}
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
