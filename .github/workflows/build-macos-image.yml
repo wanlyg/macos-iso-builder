@@ -131,30 +131,29 @@ jobs:
           fi
 
           echo "_build=true" >> $GITHUB_OUTPUT
-
   build-macos-image:
     needs: preflight
     if: needs.preflight.outputs._build == 'true'
     runs-on: macos-15-intel
-    timeout-minutes: 90   # 增加超时，因为压缩大文件需要时间
+    timeout-minutes: 120
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: System Information
-        run: |
-          echo "Runner OS: $(sw_vers -productName) $(sw_vers -productVersion)"
-          echo "Architecture: $(uname -m)"
-
       - name: Create macOS image
         id: create_image
         run: |
+          echo "Building macOS \( {{ inputs.macos_version }} ( \){{ inputs.image_format }})"
+          
           ./mkmaciso "\( {{ inputs.macos_version }}" " \){{ inputs.image_format }}"
+          
           if [ "${{ inputs.image_format }}" == "iso" ]; then
-            echo "image_name=$(basename *.iso)" >> $GITHUB_OUTPUT
+            IMAGE_FILE=$(ls -1 *.iso 2>/dev/null | head -n 1)
           else
-            echo "image_name=$(basename *.dmg.img)" >> $GITHUB_OUTPUT
+            IMAGE_FILE=$(ls -1 *.dmg.img *.dmg 2>/dev/null | head -n 1)
           fi
+          
+          echo "image_name=${IMAGE_FILE}" >> $GITHUB_OUTPUT
 
       - name: Compress to ZIP
         id: compress
@@ -162,42 +161,26 @@ jobs:
           IMAGE_NAME="${{ steps.create_image.outputs.image_name }}"
           ZIP_NAME="${IMAGE_NAME}.zip"
           
-          echo "Compressing ${IMAGE_NAME} → ${ZIP_NAME} ..."
-          # 使用较高压缩级别（9），但对磁盘镜像效果可能有限
-          zip -9 -v "\( {ZIP_NAME}" " \){IMAGE_NAME}"
+          echo "Compressing ${IMAGE_NAME} → ${ZIP_NAME} (this may take a while)..."
+          zip -9 "\( {ZIP_NAME}" " \){IMAGE_NAME}"
           
           echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
-          echo "original_size=\( (du -h " \){IMAGE_NAME}" | cut -f1)" >> $GITHUB_OUTPUT
-          echo "zip_size=\( (du -h " \){ZIP_NAME}" | cut -f1)" >> $GITHUB_OUTPUT
 
       - name: Upload Artifact (ZIP)
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.compress.outputs.zip_name }}
           path: ${{ steps.compress.outputs.zip_name }}
-          compression-level: 0      # zip 已经压缩过了，这里不需要再压缩
+          compression-level: 0
           retention-days: 15
 
       - name: Summary
         if: always()
         run: |
-          ZIP_NAME="${{ steps.compress.outputs.zip_name }}"
-          
           if [ "${{ job.status }}" == "success" ]; then
-            echo "## ✅ Build & Compress Success" >> $GITHUB_STEP_SUMMARY
-            echo "**原始文件**：\( {{ steps.create_image.outputs.image_name }} ( \){{ steps.compress.outputs.original_size }})" >> $GITHUB_STEP_SUMMARY
-            echo "**ZIP 文件**：\( {ZIP_NAME} ( \){{ steps.compress.outputs.zip_size }})" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ Build Success: ${{ steps.create_image.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "**ZIP 下载包**：${{ steps.compress.outputs.zip_name }}" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            
-            echo "### 📥 无需登录快速下载" >> $GITHUB_STEP_SUMMARY
-            echo "推荐使用 **nightly.link** 下载：" >> $GITHUB_STEP_SUMMARY
-            echo "→ https://nightly.link/LongQT-sea/macos-iso-builder/workflows/Build%20Full%20Installer%20ISO%2FDmg%20image/main" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            echo "> [!TIP]" >> $GITHUB_STEP_SUMMARY
-            echo "> 下载后解压命令：" >> $GITHUB_STEP_SUMMARY
-            echo "> \`\`\`bash" >> $GITHUB_STEP_SUMMARY
-            echo "> unzip ${ZIP_NAME}" >> $GITHUB_STEP_SUMMARY
-            echo "> \`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "> Star 本仓库可跳过 preflight 直接构建" >> $GITHUB_STEP_SUMMARY
+            echo "### 📥 快速下载（推荐）" >> $GITHUB_STEP_SUMMARY
+            echo "https://nightly.link/LongQT-sea/macos-iso-builder/workflows/Build%20Full%20Installer%20ISO%2FDmg%20image/main" >> $GITHUB_STEP_SUMMARY
           fi
