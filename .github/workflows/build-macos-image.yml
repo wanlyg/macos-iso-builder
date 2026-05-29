@@ -131,59 +131,67 @@ jobs:
           fi
 
           echo "_build=true" >> $GITHUB_OUTPUT
+
   build-macos-image:
     needs: preflight
     if: needs.preflight.outputs._build == 'true'
     runs-on: macos-15-intel
-    timeout-minutes: 120
+    timeout-minutes: 80
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: System Information
+        run: |
+          echo "Runner OS: $(sw_vers -productName) $(sw_vers -productVersion)"
+          echo "Architecture: $(uname -m)"
+          echo ""
+          df -h $(mktemp)
+          echo ""
+          echo "RAM: $(top -l 1 | grep PhysMem)"
+          echo ""
+          echo "CPU: $(sysctl -n machdep.cpu.brand_string)"
+
       - name: Create macOS image
         id: create_image
         run: |
-          MACOS_VERSION="${{ inputs.macos_version }}"
-          IMAGE_FORMAT="${{ inputs.image_format }}"
-          
-          echo "Building macOS ${MACOS_VERSION} as ${IMAGE_FORMAT}"
-          ./mkmaciso "\( {MACOS_VERSION}" " \){IMAGE_FORMAT}"
-          
-          if [ "${IMAGE_FORMAT}" = "iso" ]; then
-            IMAGE_FILE=$(ls -1 *.iso 2>/dev/null | head -n 1)
+          ./mkmaciso "${{ inputs.macos_version }}" "${{ inputs.image_format }}"
+          if [ "${{ inputs.image_format }}" == "iso" ]; then
+            echo "image_name=$(basename *.iso)" >> $GITHUB_OUTPUT
           else
-            IMAGE_FILE=$(ls -1 *.dmg.img *.dmg 2>/dev/null | head -n 1)
+            echo "image_name=$(basename *.dmg.img)" >> $GITHUB_OUTPUT
           fi
-          
-          echo "image_name=${IMAGE_FILE}" >> $GITHUB_OUTPUT
 
-      - name: Compress to ZIP
-        id: compress
-        run: |
-          IMAGE_NAME="${{ steps.create_image.outputs.image_name }}"
-          ZIP_NAME="${IMAGE_NAME}.zip"
-          
-          echo "Compressing ${IMAGE_NAME} → ${ZIP_NAME} ..."
-          zip -9 "\( {ZIP_NAME}" " \){IMAGE_NAME}"
-          
-          echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Upload Artifact (ZIP)
+      - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.compress.outputs.zip_name }}
-          path: ${{ steps.compress.outputs.zip_name }}
-          compression-level: 0
+          path: ${{ steps.create_image.outputs.image_name }}
+          compression-level: 9
           retention-days: 15
+          archive: true
 
       - name: Summary
         if: always()
         run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            echo "## ✅ Build Success" >> $GITHUB_STEP_SUMMARY
-            echo "文件：${{ steps.create_image.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
-            echo "ZIP包：${{ steps.compress.outputs.zip_name }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.create_image.outcome }}" == "failure" ]; then
+            echo "## Download macOS failed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📥 无需登录下载" >> $GITHUB_STEP_SUMMARY
-            echo "https://nightly.link/LongQT-sea/macos-iso-builder/workflows/Build%20Full%20Installer%20ISO%2FDmg%20image/main" >> $GITHUB_STEP_SUMMARY
+            echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
+            echo "> This runner may have network issues. Please **re-run the workflow** to try a different runner." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ job.status }}" == "success" ]; then
+            if [ "${{ inputs.image_format }}" == "iso" ]; then
+              echo "## Successfully built $(basename *.iso)" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "> [!Important]" >> $GITHUB_STEP_SUMMARY
+              echo "> This ISO image is intended for creating macOS virtual machines on Proxmox VE, QEMU, VMware, and VirtualBox." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "## Successfully built $(basename *.dmg.img)" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "> [!Important]" >> $GITHUB_STEP_SUMMARY
+              echo '> This DMG image is intended for flashing to USB drive using [Rufus](https://rufus.ie/en/#download) *(Windows)* or `dd` *(Linux)*.' >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> [!TIP]" >> $GITHUB_STEP_SUMMARY
+            echo "> Enable [Cloudflare WARP](https://one.one.one.one/) for faster download from GitHub artifact." >> $GITHUB_STEP_SUMMARY
           fi
