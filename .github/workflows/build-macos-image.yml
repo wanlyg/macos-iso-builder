@@ -1,8 +1,5 @@
 name: Build Full Installer ISO/DMG image
 
-permissions:
-  contents: write
-  
 on:
   workflow_dispatch:
     inputs:
@@ -139,8 +136,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs._build == 'true'
     runs-on: macos-15-intel
-    timeout-minutes: 80
-
+    timeout-minutes: 90   # 增加超时，因为压缩大文件需要时间
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -149,70 +145,59 @@ jobs:
         run: |
           echo "Runner OS: $(sw_vers -productName) $(sw_vers -productVersion)"
           echo "Architecture: $(uname -m)"
-          echo ""
-          df -h $(mktemp)
-          echo ""
-          echo "RAM: $(top -l 1 | grep PhysMem)"
-          echo ""
-          echo "CPU: $(sysctl -n machdep.cpu.brand_string)"
 
       - name: Create macOS image
         id: create_image
         run: |
-          ./mkmaciso "${{ inputs.macos_version }}" "${{ inputs.image_format }}"
+          ./mkmaciso "\( {{ inputs.macos_version }}" " \){{ inputs.image_format }}"
           if [ "${{ inputs.image_format }}" == "iso" ]; then
             echo "image_name=$(basename *.iso)" >> $GITHUB_OUTPUT
           else
             echo "image_name=$(basename *.dmg.img)" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload artifact
+      - name: Compress to ZIP
+        id: compress
+        run: |
+          IMAGE_NAME="${{ steps.create_image.outputs.image_name }}"
+          ZIP_NAME="${IMAGE_NAME}.zip"
+          
+          echo "Compressing ${IMAGE_NAME} → ${ZIP_NAME} ..."
+          # 使用较高压缩级别（9），但对磁盘镜像效果可能有限
+          zip -9 -v "\( {ZIP_NAME}" " \){IMAGE_NAME}"
+          
+          echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
+          echo "original_size=\( (du -h " \){IMAGE_NAME}" | cut -f1)" >> $GITHUB_OUTPUT
+          echo "zip_size=\( (du -h " \){ZIP_NAME}" | cut -f1)" >> $GITHUB_OUTPUT
+
+      - name: Upload Artifact (ZIP)
         uses: actions/upload-artifact@v7
         with:
-          path: ${{ steps.create_image.outputs.image_name }}
-          compression-level: 0
+          name: ${{ steps.compress.outputs.zip_name }}
+          path: ${{ steps.compress.outputs.zip_name }}
+          compression-level: 0      # zip 已经压缩过了，这里不需要再压缩
           retention-days: 15
-          archive: false
 
       - name: Summary
         if: always()
         run: |
-          if [ "${{ steps.create_image.outcome }}" == "failure" ]; then
-            echo "## Download macOS failed" >> $GITHUB_STEP_SUMMARY
+          ZIP_NAME="${{ steps.compress.outputs.zip_name }}"
+          
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "## ✅ Build & Compress Success" >> $GITHUB_STEP_SUMMARY
+            echo "**原始文件**：\( {{ steps.create_image.outputs.image_name }} ( \){{ steps.compress.outputs.original_size }})" >> $GITHUB_STEP_SUMMARY
+            echo "**ZIP 文件**：\( {ZIP_NAME} ( \){{ steps.compress.outputs.zip_size }})" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
-            echo "> This runner may have network issues. Please **re-run the workflow** to try a different runner." >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ job.status }}" == "success" ]; then
-            if [ "${{ inputs.image_format }}" == "iso" ]; then
-              echo "## Successfully built $(basename *.iso)" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "> [!Important]" >> $GITHUB_STEP_SUMMARY
-              echo "> This ISO image is intended for creating macOS virtual machines on Proxmox VE, QEMU, VMware, and VirtualBox." >> $GITHUB_STEP_SUMMARY
-            else
-              echo "## Successfully built $(basename *.dmg.img)" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "> [!Important]" >> $GITHUB_STEP_SUMMARY
-              echo '> This DMG image is intended for flashing to USB drive using [Rufus](https://rufus.ie/en/#download) *(Windows)* or `dd` *(Linux)*.' >> $GITHUB_STEP_SUMMARY
-            fi
+            
+            echo "### 📥 无需登录快速下载" >> $GITHUB_STEP_SUMMARY
+            echo "推荐使用 **nightly.link** 下载：" >> $GITHUB_STEP_SUMMARY
+            echo "→ https://nightly.link/LongQT-sea/macos-iso-builder/workflows/Build%20Full%20Installer%20ISO%2FDmg%20image/main" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
+            
             echo "> [!TIP]" >> $GITHUB_STEP_SUMMARY
-            echo "> Enable [Cloudflare WARP](https://one.one.one.one/) for faster download from GitHub artifact." >> $GITHUB_STEP_SUMMARY
+            echo "> 下载后解压命令：" >> $GITHUB_STEP_SUMMARY
+            echo "> \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "> unzip ${ZIP_NAME}" >> $GITHUB_STEP_SUMMARY
+            echo "> \`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "> Star 本仓库可跳过 preflight 直接构建" >> $GITHUB_STEP_SUMMARY
           fi
-      - name: Prepare Release Name
-        id: release
-        run: |
-          FORMAT_UPPER=$(echo "${{ inputs.image_format }}" | tr '[:lower:]' '[:upper:]')
-          echo "name=macOS ${{ inputs.macos_version }} ${FORMAT_UPPER}" >> $GITHUB_OUTPUT
-          echo "tag=${{ inputs.macos_version }}-${{ inputs.image_format }}-${{ github.run_id }}" >> $GITHUB_OUTPUT
-      - name: Upload to Release
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          name: ${{ steps.release.outputs.name }}
-          files: ${{ steps.create_image.outputs.image_name }}
-          draft: false
-          prerelease: true
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
