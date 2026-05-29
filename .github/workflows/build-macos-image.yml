@@ -143,11 +143,13 @@ jobs:
       - name: Create macOS image
         id: create_image
         run: |
-          echo "Building macOS \( {{ inputs.macos_version }} ( \){{ inputs.image_format }})"
+          MACOS_VERSION="${{ inputs.macos_version }}"
+          IMAGE_FORMAT="${{ inputs.image_format }}"
           
-          ./mkmaciso "\( {{ inputs.macos_version }}" " \){{ inputs.image_format }}"
+          echo "Building macOS ${MACOS_VERSION} as ${IMAGE_FORMAT}"
+          ./mkmaciso "\( {MACOS_VERSION}" " \){IMAGE_FORMAT}"
           
-          if [ "${{ inputs.image_format }}" == "iso" ]; then
+          if [ "${IMAGE_FORMAT}" = "iso" ]; then
             IMAGE_FILE=$(ls -1 *.iso 2>/dev/null | head -n 1)
           else
             IMAGE_FILE=$(ls -1 *.dmg.img *.dmg 2>/dev/null | head -n 1)
@@ -161,7 +163,7 @@ jobs:
           IMAGE_NAME="${{ steps.create_image.outputs.image_name }}"
           ZIP_NAME="${IMAGE_NAME}.zip"
           
-          echo "Compressing ${IMAGE_NAME} → ${ZIP_NAME} (this may take a while)..."
+          echo "Compressing ${IMAGE_NAME} → ${ZIP_NAME} ..."
           zip -9 "\( {ZIP_NAME}" " \){IMAGE_NAME}"
           
           echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
@@ -178,9 +180,10 @@ jobs:
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "## ✅ Build Success: ${{ steps.create_image.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
-            echo "**ZIP 下载包**：${{ steps.compress.outputs.zip_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ Build Success" >> $GITHUB_STEP_SUMMARY
+            echo "文件：${{ steps.create_image.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "ZIP包：${{ steps.compress.outputs.zip_name }}" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📥 快速下载（推荐）" >> $GITHUB_STEP_SUMMARY
+            echo "### 📥 无需登录下载" >> $GITHUB_STEP_SUMMARY
             echo "https://nightly.link/LongQT-sea/macos-iso-builder/workflows/Build%20Full%20Installer%20ISO%2FDmg%20image/main" >> $GITHUB_STEP_SUMMARY
           fi
